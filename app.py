@@ -20,10 +20,7 @@ COLUMNAS_REPORTE = [
 ]
 
 COLUMNAS_ORIGINAL = ["id_reporte", "fecha_procesamiento", "texto_original"]
-
-COLUMNAS_FALTANTES = [
-    "id_reporte", "campo", "valor_final", "fue_completado_manual"
-]
+COLUMNAS_FALTANTES = ["id_reporte", "campo", "valor_final", "fue_completado_manual"]
 
 CAMPOS_OBLIGATORIOS = [
     "fecha_reporte", "equipo", "unidad", "hora_inicio_actividades",
@@ -47,12 +44,10 @@ ETIQUETAS = {
 
 
 def iniciar_estado():
-    if "datos_originales" not in st.session_state:
-        st.session_state["datos_originales"] = []
-    if "respaldos" not in st.session_state:
-        st.session_state["respaldos"] = []
-    if "faltantes_por_reporte" not in st.session_state:
-        st.session_state["faltantes_por_reporte"] = {}
+    st.session_state.setdefault("datos_originales", [])
+    st.session_state.setdefault("respaldos", [])
+    st.session_state.setdefault("faltantes_por_reporte", {})
+    st.session_state.setdefault("texto_input", "")
 
 
 def limpiar_texto(texto):
@@ -98,14 +93,20 @@ def generar_id_reporte(texto):
 
 def extraer_campo(texto, etiqueta):
     patron = (
-        rf"(?i){etiqueta}\s*:\s*"
+        rf"(?i){re.escape(etiqueta)}\s*"
+        rf"(?:\([^)]*\))?\s*:\s*"
         rf"(.*?)"
-        rf"(?=\n(?:fecha|equipo|unidad|hora de inicio de actividades|"
-        rf"equipo completo excavadores|disponibilidad de sombra|"
-        rf"estado de harneros|estado de baldes|estado de mesa harnero|"
-        rf"observaciones)\s*:|\Z)"
+        rf"(?=\n(?:"
+        rf"fecha|equipo|unidad|hora de inicio de actividades|"
+        rf"equipo completo excavadores(?:\s*\([^)]*\))?|"
+        rf"disponibilidad de sombra(?:\s*\([^)]*\))?|"
+        rf"estado de harneros|estado de baldes|"
+        rf"estado de mesa harnero|observaciones"
+        rf")\s*:|\Z)"
     )
-    match = re.search(patron, texto, flags=re.DOTALL)
+
+    match = re.search(patron, texto, flags=re.IGNORECASE | re.DOTALL)
+
     if not match:
         return ""
 
@@ -121,11 +122,19 @@ def normalizar_fecha(valor_fecha):
     valor = str(valor_fecha).strip().lower().replace(" de ", " ")
 
     meses = {
-        "enero": "january", "febrero": "february", "marzo": "march",
-        "abril": "april", "mayo": "may", "junio": "june",
-        "julio": "july", "agosto": "august", "septiembre": "september",
-        "setiembre": "september", "octubre": "october",
-        "noviembre": "november", "diciembre": "december",
+        "enero": "january",
+        "febrero": "february",
+        "marzo": "march",
+        "abril": "april",
+        "mayo": "may",
+        "junio": "june",
+        "julio": "july",
+        "agosto": "august",
+        "septiembre": "september",
+        "setiembre": "september",
+        "octubre": "october",
+        "noviembre": "november",
+        "diciembre": "december",
     }
 
     for esp, eng in meses.items():
@@ -173,13 +182,27 @@ def procesar_reporte(texto_original):
         "tipo_reporte": detectar_tipo_reporte(texto_limpio),
         "equipo": normalizar_texto_simple(extraer_campo(texto_limpio, "equipo")),
         "unidad": normalizar_texto_simple(extraer_campo(texto_limpio, "unidad")),
-        "hora_inicio_actividades": normalizar_texto_simple(extraer_campo(texto_limpio, "hora de inicio de actividades")),
-        "equipo_completo_excavadores": normalizar_texto_simple(extraer_campo(texto_limpio, "equipo completo excavadores")),
-        "disponibilidad_sombra": normalizar_texto_simple(extraer_campo(texto_limpio, "disponibilidad de sombra")),
-        "estado_harneros": normalizar_texto_simple(extraer_campo(texto_limpio, "estado de harneros")),
-        "estado_baldes": normalizar_texto_simple(extraer_campo(texto_limpio, "estado de baldes")),
-        "estado_mesa_harnero": normalizar_texto_simple(extraer_campo(texto_limpio, "estado de mesa harnero")),
-        "observaciones": normalizar_texto_simple(extraer_campo(texto_limpio, "observaciones")),
+        "hora_inicio_actividades": normalizar_texto_simple(
+            extraer_campo(texto_limpio, "hora de inicio de actividades")
+        ),
+        "equipo_completo_excavadores": normalizar_texto_simple(
+            extraer_campo(texto_limpio, "equipo completo excavadores")
+        ),
+        "disponibilidad_sombra": normalizar_texto_simple(
+            extraer_campo(texto_limpio, "disponibilidad de sombra")
+        ),
+        "estado_harneros": normalizar_texto_simple(
+            extraer_campo(texto_limpio, "estado de harneros")
+        ),
+        "estado_baldes": normalizar_texto_simple(
+            extraer_campo(texto_limpio, "estado de baldes")
+        ),
+        "estado_mesa_harnero": normalizar_texto_simple(
+            extraer_campo(texto_limpio, "estado de mesa harnero")
+        ),
+        "observaciones": normalizar_texto_simple(
+            extraer_campo(texto_limpio, "observaciones")
+        ),
         "fecha_procesamiento": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
     }
 
@@ -233,18 +256,24 @@ def aplicar_correcciones(datos, correcciones, no_completar):
         if not datos_corregidos.get(campo)
     ]
 
-    datos_corregidos["estado_validacion"] = "Completo" if not faltantes_finales else "Incompleto"
-    datos_corregidos["campos_faltantes"] = ", ".join([ETIQUETAS[c] for c in faltantes_finales])
+    datos_corregidos["estado_validacion"] = (
+        "Completo" if not faltantes_finales else "Incompleto"
+    )
+    datos_corregidos["campos_faltantes"] = ", ".join(
+        [ETIQUETAS[c] for c in faltantes_finales]
+    )
 
     return datos_corregidos, registros_faltantes
 
 
 def generar_excel(df_reportes, df_originales, df_faltantes):
     output = BytesIO()
+
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_reportes.to_excel(writer, index=False, sheet_name="Reporte estructurado")
         df_originales.to_excel(writer, index=False, sheet_name="Mensajes originales")
         df_faltantes.to_excel(writer, index=False, sheet_name="Faltantes corregidos")
+
     output.seek(0)
     return output
 
@@ -277,7 +306,7 @@ iniciar_estado()
 st.title("Consolidador de reportes WhatsApp")
 
 st.markdown("""
-Esta app permite pegar reportes de WhatsApp, convertirlos en una tabla ordenada
+Esta app permite pegar reportes enviados por WhatsApp, convertirlos en una tabla ordenada
 y descargar un Excel consolidado.
 
 ### Formas de uso
@@ -295,16 +324,29 @@ Los reportes agregados se acumulan en pantalla hasta que presiones **Vaciar cons
 - Si no hay fecha, usa la fecha del día.
 - Detecta campos faltantes.
 - Permite completar campos debajo de cada reporte.
+- Reconoce etiquetas con paréntesis, por ejemplo:
+  - `Equipo completo excavadores (si o no): si, 1`
+  - `Disponibilidad de sombra (si o no): si, malla`
 - Descarga un Excel con:
   - reporte estructurado,
   - mensajes originales,
   - faltantes corregidos.
 - Descarga un TXT con respaldo de los mensajes originales.
+
+### Instrucciones
+
+1. Pega uno o varios reportes en la caja de texto.
+2. Presiona **Agregar al consolidado**.
+3. Revisa si hay alertas de campos faltantes.
+4. Si falta información, complétala manualmente o marca **No completar este reporte**.
+5. Si llega otro reporte después, presiona **Limpiar caja de texto**, pega el nuevo reporte y vuelve a presionar **Agregar al consolidado**.
+6. Cuando termines, descarga el Excel o el respaldo TXT.
 """)
 
 texto = st.text_area(
     "Pega aquí uno o varios reportes nuevos",
     height=300,
+    key="texto_input",
     placeholder="Pega aquí el reporte recién recibido o varios reportes juntos..."
 )
 
@@ -320,6 +362,7 @@ with col3:
     vaciar = st.button("Vaciar consolidado")
 
 if limpiar_caja:
+    st.session_state["texto_input"] = ""
     st.rerun()
 
 if vaciar:
@@ -399,7 +442,9 @@ if st.session_state["datos_originales"]:
                 st.success("Reporte completo.")
 
             datos_corregidos, registros = aplicar_correcciones(
-                datos, correcciones, no_completar
+                datos,
+                correcciones,
+                no_completar
             )
 
             datos_finales.append(datos_corregidos)
