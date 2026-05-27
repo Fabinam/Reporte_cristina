@@ -50,6 +50,10 @@ def iniciar_estado():
     st.session_state.setdefault("texto_input", "")
 
 
+def limpiar_solo_caja():
+    st.session_state["texto_input"] = ""
+
+
 def limpiar_texto(texto):
     texto = texto.replace("⁠", "")
     texto = texto.replace("\u200e", "")
@@ -311,10 +315,8 @@ y descargar un Excel consolidado.
 
 ### Formas de uso
 
-Puedes usarla de dos maneras:
-
-1. **Carga masiva:** pegar varios reportes juntos y presionar **Agregar al consolidado**.
-2. **Carga individual:** pegar un reporte, agregarlo, luego pegar otro y volver a agregarlo.
+1. **Carga masiva:** pega varios reportes juntos y presiona **Agregar al consolidado**.
+2. **Carga individual:** pega un reporte, agrégalo, luego limpia la caja y pega otro.
 
 Los reportes agregados se acumulan en pantalla hasta que presiones **Vaciar consolidado**.
 
@@ -356,14 +358,10 @@ with col1:
     agregar = st.button("Agregar al consolidado", type="primary")
 
 with col2:
-    limpiar_caja = st.button("Limpiar caja de texto")
+    st.button("Limpiar caja de texto", on_click=limpiar_solo_caja)
 
 with col3:
     vaciar = st.button("Vaciar consolidado")
-
-if limpiar_caja:
-    st.session_state["texto_input"] = ""
-    st.rerun()
 
 if vaciar:
     st.session_state.clear()
