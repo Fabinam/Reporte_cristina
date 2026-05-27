@@ -42,6 +42,19 @@ ETIQUETAS = {
     "observaciones": "Observaciones",
 }
 
+PATRONES_CAMPOS = {
+    "fecha": r"fecha",
+    "equipo": r"equipo",
+    "unidad": r"unidad",
+    "hora_inicio_actividades": r"hora\s+de\s+inicio\s+de\s+actividades",
+    "equipo_completo_excavadores": r"equipo\s+completo\s+excavadores(?:\s*\([^)]*\))?",
+    "disponibilidad_sombra": r"disponibilidad\s+de\s+sombra(?:\s*\([^)]*\))?",
+    "estado_harneros": r"estado\s+de\s+harneros",
+    "estado_baldes": r"estado\s+de\s+baldes",
+    "estado_mesa_harnero": r"estado\s+de\s+mesa\s+harnero",
+    "observaciones": r"observaciones",
+}
+
 
 def iniciar_estado():
     st.session_state.setdefault("datos_originales", [])
@@ -62,17 +75,6 @@ def limpiar_texto(texto):
     texto = texto.replace("\t", " ")
     texto = re.sub(r"[•●▪◦]", "\n", texto)
     texto = re.sub(r"(?m)^\s*[-*]\s*", "", texto)
-
-    etiquetas = [
-        "fecha", "equipo", "unidad", "hora de inicio de actividades",
-        "equipo completo excavadores", "disponibilidad de sombra",
-        "estado de harneros", "estado de baldes",
-        "estado de mesa harnero", "observaciones",
-    ]
-
-    for etiqueta in etiquetas:
-        texto = re.sub(rf"(?i)\b({etiqueta})\s*:", rf"\n\1:", texto)
-
     texto = re.sub(r"\n{2,}", "\n", texto)
     return texto.strip()
 
@@ -95,28 +97,41 @@ def generar_id_reporte(texto):
     return hashlib.md5(texto.strip().encode("utf-8")).hexdigest()[:10]
 
 
-def extraer_campo(texto, etiqueta):
-    patron = (
-        rf"(?i){re.escape(etiqueta)}\s*"
-        rf"(?:\([^)]*\))?\s*:\s*"
-        rf"(.*?)"
-        rf"(?=\n(?:"
-        rf"fecha|equipo|unidad|hora de inicio de actividades|"
-        rf"equipo completo excavadores(?:\s*\([^)]*\))?|"
-        rf"disponibilidad de sombra(?:\s*\([^)]*\))?|"
-        rf"estado de harneros|estado de baldes|"
-        rf"estado de mesa harnero|observaciones"
-        rf")\s*:|\Z)"
+def extraer_campos(texto):
+    texto = limpiar_texto(texto)
+
+    patron_general = "|".join(
+        f"(?P<{campo}>{patron})"
+        for campo, patron in PATRONES_CAMPOS.items()
     )
 
-    match = re.search(patron, texto, flags=re.IGNORECASE | re.DOTALL)
+    patron = re.compile(
+        rf"(?im)^\s*(?:[-*]\s*)?(?P<label>{patron_general})\s*:\s*"
+    )
 
-    if not match:
-        return ""
+    matches = list(patron.finditer(texto))
+    campos = {campo: "" for campo in PATRONES_CAMPOS.keys()}
 
-    valor = match.group(1).strip()
-    valor = re.sub(r"\s+", " ", valor)
-    return valor
+    for i, match in enumerate(matches):
+        campo_detectado = None
+
+        for campo in PATRONES_CAMPOS.keys():
+            if match.group(campo):
+                campo_detectado = campo
+                break
+
+        if not campo_detectado:
+            continue
+
+        inicio_valor = match.end()
+        fin_valor = matches[i + 1].start() if i + 1 < len(matches) else len(texto)
+
+        valor = texto[inicio_valor:fin_valor].strip()
+        valor = re.sub(r"\s+", " ", valor).strip()
+
+        campos[campo_detectado] = valor
+
+    return campos
 
 
 def normalizar_fecha(valor_fecha):
@@ -174,9 +189,10 @@ def detectar_tipo_reporte(texto):
 
 def procesar_reporte(texto_original):
     texto_limpio = limpiar_texto(texto_original)
+    campos = extraer_campos(texto_limpio)
     id_reporte = generar_id_reporte(texto_original)
 
-    fecha_raw = extraer_campo(texto_limpio, "fecha")
+    fecha_raw = campos.get("fecha", "")
     fecha_reporte, fecha_default = normalizar_fecha(fecha_raw)
 
     datos = {
@@ -184,40 +200,26 @@ def procesar_reporte(texto_original):
         "fecha_reporte": fecha_reporte,
         "fecha_usada_por_defecto": "Sí" if fecha_default else "No",
         "tipo_reporte": detectar_tipo_reporte(texto_limpio),
-        "equipo": normalizar_texto_simple(extraer_campo(texto_limpio, "equipo")),
-        "unidad": normalizar_texto_simple(extraer_campo(texto_limpio, "unidad")),
-        "hora_inicio_actividades": normalizar_texto_simple(
-            extraer_campo(texto_limpio, "hora de inicio de actividades")
-        ),
-        "equipo_completo_excavadores": normalizar_texto_simple(
-            extraer_campo(texto_limpio, "equipo completo excavadores")
-        ),
-        "disponibilidad_sombra": normalizar_texto_simple(
-            extraer_campo(texto_limpio, "disponibilidad de sombra")
-        ),
-        "estado_harneros": normalizar_texto_simple(
-            extraer_campo(texto_limpio, "estado de harneros")
-        ),
-        "estado_baldes": normalizar_texto_simple(
-            extraer_campo(texto_limpio, "estado de baldes")
-        ),
-        "estado_mesa_harnero": normalizar_texto_simple(
-            extraer_campo(texto_limpio, "estado de mesa harnero")
-        ),
-        "observaciones": normalizar_texto_simple(
-            extraer_campo(texto_limpio, "observaciones")
-        ),
+        "equipo": normalizar_texto_simple(campos.get("equipo", "")),
+        "unidad": normalizar_texto_simple(campos.get("unidad", "")),
+        "hora_inicio_actividades": normalizar_texto_simple(campos.get("hora_inicio_actividades", "")),
+        "equipo_completo_excavadores": normalizar_texto_simple(campos.get("equipo_completo_excavadores", "")),
+        "disponibilidad_sombra": normalizar_texto_simple(campos.get("disponibilidad_sombra", "")),
+        "estado_harneros": normalizar_texto_simple(campos.get("estado_harneros", "")),
+        "estado_baldes": normalizar_texto_simple(campos.get("estado_baldes", "")),
+        "estado_mesa_harnero": normalizar_texto_simple(campos.get("estado_mesa_harnero", "")),
+        "observaciones": normalizar_texto_simple(campos.get("observaciones", "")),
         "fecha_procesamiento": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
     }
 
     faltantes = []
 
     for campo in CAMPOS_OBLIGATORIOS:
-        if not datos.get(campo):
+        if campo == "fecha_reporte":
+            if fecha_default and not fecha_raw:
+                faltantes.append(campo)
+        elif not datos.get(campo):
             faltantes.append(campo)
-
-    if fecha_default and not fecha_raw:
-        faltantes.append("fecha_reporte")
 
     faltantes = list(dict.fromkeys(faltantes))
 
@@ -329,6 +331,7 @@ Los reportes agregados se acumulan en pantalla hasta que presiones **Vaciar cons
 - Reconoce etiquetas con paréntesis, por ejemplo:
   - `Equipo completo excavadores (si o no): si, 1`
   - `Disponibilidad de sombra (si o no): si, malla`
+- Si un campo viene vacío, lo reconoce como faltante.
 - Descarga un Excel con:
   - reporte estructurado,
   - mensajes originales,
