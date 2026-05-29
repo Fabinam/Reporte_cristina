@@ -265,11 +265,36 @@ def iniciar_estado():
     st.session_state.setdefault("respaldos", [])
     st.session_state.setdefault("faltantes_por_reporte", {})
     st.session_state.setdefault("alertas_por_reporte", {})
+    st.session_state.setdefault("reportes_cerrados", set())
     st.session_state.setdefault("texto_input", "")
 
 
 def limpiar_solo_caja():
     st.session_state["texto_input"] = ""
+
+
+def cerrar_reporte(id_reporte, datos_corregidos, registros, alertas_correccion):
+    """Guarda las correcciones validadas y oculta la sección de edición del reporte."""
+    for idx, item in enumerate(st.session_state.get("datos_originales", [])):
+        if item.get("id_reporte") == id_reporte:
+            st.session_state["datos_originales"][idx] = datos_corregidos
+            break
+
+    # Si quedó validado sin alertas, limpiamos pendientes de ese reporte.
+    if datos_corregidos.get("estado_validacion") == "Completo" and not alertas_correccion:
+        st.session_state["faltantes_por_reporte"][id_reporte] = []
+        st.session_state["alertas_por_reporte"][id_reporte] = []
+    else:
+        # Mantiene registro si fue cerrado como No informado o Revisar.
+        nuevos_faltantes = []
+        campos_txt = datos_corregidos.get("campos_faltantes", "")
+        for campo, etiqueta in ETIQUETAS.items():
+            if etiqueta in campos_txt:
+                nuevos_faltantes.append(campo)
+        st.session_state["faltantes_por_reporte"][id_reporte] = nuevos_faltantes
+        st.session_state["alertas_por_reporte"][id_reporte] = alertas_correccion
+
+    st.session_state.setdefault("reportes_cerrados", set()).add(id_reporte)
 
 
 def normalizar_clave(texto):
@@ -1004,61 +1029,81 @@ if st.session_state["datos_originales"]:
             st.write(f"**Equipo detectado:** {datos.get('equipo') or 'No detectado'}")
             st.write(f"**Fecha detectada:** {datos.get('fecha_reporte')}")
 
+            cerrado = id_reporte in st.session_state.get("reportes_cerrados", set())
+
             alertas_formato = [alerta for alerta in alertas if not es_alerta_validacion(alerta)]
             alertas_validacion_inicial = [alerta for alerta in alertas if es_alerta_validacion(alerta)]
             campos_invalidos = campos_invalidos_desde_alertas(alertas_validacion_inicial)
             campos_para_revisar = unir_campos_sin_duplicados(faltantes, campos_invalidos)
 
-            if alertas_formato:
-                for alerta in alertas_formato:
-                    st.warning(f"{alerta['tipo_alerta']}: {alerta['detalle']}")
-                    registros_alertas.append(alerta)
+            if cerrado:
+                st.success("Reporte revisado. La sección de edición está cerrada.")
+                if st.button("Editar nuevamente", key=f"editar_{id_reporte}"):
+                    st.session_state["reportes_cerrados"].discard(id_reporte)
+                    st.rerun()
 
-            if alertas_validacion_inicial:
-                for alerta in alertas_validacion_inicial:
-                    st.warning(f"{alerta['tipo_alerta']}: {alerta['detalle']}")
+                datos_corregidos = datos.copy()
+                registros = []
+                alertas_correccion = []
 
-            correcciones = {}
-            no_completar = set()
+            else:
+                if alertas_formato:
+                    for alerta in alertas_formato:
+                        st.warning(f"{alerta['tipo_alerta']}: {alerta['detalle']}")
+                        registros_alertas.append(alerta)
 
-            if campos_para_revisar:
-                if faltantes:
-                    st.warning("Campos faltantes: " + ", ".join([ETIQUETAS[c] for c in faltantes]))
-                if campos_invalidos:
-                    st.warning("Campos con valores inválidos: " + ", ".join([ETIQUETAS[c] for c in campos_invalidos]))
+                if alertas_validacion_inicial:
+                    for alerta in alertas_validacion_inicial:
+                        st.warning(f"{alerta['tipo_alerta']}: {alerta['detalle']}")
 
-                decision = st.radio(
-                    "¿Quieres corregir manualmente los campos observados?",
-                    ["Sí, corregir ahora", "No completar este reporte"],
-                    key=f"decision_{id_reporte}",
-                    horizontal=True,
+                correcciones = {}
+                no_completar = set()
+
+                if campos_para_revisar:
+                    if faltantes:
+                        st.warning("Campos faltantes: " + ", ".join([ETIQUETAS[c] for c in faltantes]))
+                    if campos_invalidos:
+                        st.warning("Campos con valores inválidos: " + ", ".join([ETIQUETAS[c] for c in campos_invalidos]))
+
+                    decision = st.radio(
+                        "¿Quieres corregir manualmente los campos observados?",
+                        ["Sí, corregir ahora", "No completar este reporte"],
+                        key=f"decision_{id_reporte}",
+                        horizontal=True,
+                    )
+
+                    if decision == "Sí, corregir ahora":
+                        for campo in campos_para_revisar:
+                            valor_actual = datos.get(campo, "") if campo in campos_invalidos else ""
+                            correcciones[campo] = st.text_input(
+                                ETIQUETAS[campo],
+                                value=valor_actual,
+                                key=f"{id_reporte}_{campo}",
+                                help="Corrige este campo. Se aplicarán las mismas validaciones del reporte original."
+                            )
+                    else:
+                        no_completar = set(campos_para_revisar)
+                else:
+                    st.success("Reporte sin campos vacíos ni valores inválidos.")
+
+                datos_corregidos, registros, alertas_correccion = aplicar_correcciones(
+                    datos,
+                    correcciones,
+                    no_completar
                 )
 
-                if decision == "Sí, corregir ahora":
-                    for campo in campos_para_revisar:
-                        valor_actual = datos.get(campo, "") if campo in campos_invalidos else ""
-                        correcciones[campo] = st.text_input(
-                            ETIQUETAS[campo],
-                            value=valor_actual,
-                            key=f"{id_reporte}_{campo}",
-                            help="Corrige este campo. Se aplicarán las mismas validaciones del reporte original."
-                        )
-                else:
-                    no_completar = set(campos_para_revisar)
-            else:
-                st.success("Reporte sin campos vacíos ni valores inválidos.")
-
-            datos_corregidos, registros, alertas_correccion = aplicar_correcciones(
-                datos,
-                correcciones,
-                no_completar
-            )
-
-            if alertas_correccion:
-                for alerta in alertas_correccion:
-                    st.error(f"Sigue pendiente: {alerta['tipo_alerta']}: {alerta['detalle']}")
-            elif campos_para_revisar and correcciones:
-                st.success("Correcciones validadas correctamente.")
+                if alertas_correccion:
+                    for alerta in alertas_correccion:
+                        st.error(f"Sigue pendiente: {alerta['tipo_alerta']}: {alerta['detalle']}")
+                elif campos_para_revisar and (correcciones or no_completar):
+                    st.success("Correcciones validadas correctamente.")
+                    if st.button("Listo: cerrar edición de este reporte", key=f"listo_{id_reporte}"):
+                        cerrar_reporte(id_reporte, datos_corregidos, registros, alertas_correccion)
+                        st.rerun()
+                elif not campos_para_revisar:
+                    if st.button("Listo: cerrar edición de este reporte", key=f"listo_ok_{id_reporte}"):
+                        cerrar_reporte(id_reporte, datos_corregidos, registros, alertas_correccion)
+                        st.rerun()
 
             datos_finales.append(datos_corregidos)
             registros_faltantes.extend(registros)
