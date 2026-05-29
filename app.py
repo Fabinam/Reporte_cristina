@@ -44,6 +44,37 @@ COLUMNAS_REPORTE = [
     "fecha_procesamiento",
 ]
 
+COLUMNAS_REPORTE_LIMPIO = [
+    "fecha_reporte",
+    "tipo_reporte",
+    "unidad",
+    "equipo",
+    "inicio_jornada",
+    "actividad",
+    "numero_excavadores",
+    "sombra_toldo_malla",
+    "cantidad_sombra_toldo_malla",
+    "calidad_sombra",
+    "cantidad_harneros",
+    "estado_harneros",
+    "cantidad_baldes",
+    "estado_baldes",
+    "mesa_gabinete",
+    "estado_mesa",
+    "observaciones",
+]
+
+COLUMNAS_VALIDACIONES = [
+    "id_reporte",
+    "estado_validacion",
+    "fecha_usada_por_defecto",
+    "campos_faltantes",
+    "valores_invalidos",
+    "campos_no_reconocidos",
+    "campos_esperados_no_detectados",
+    "fecha_procesamiento",
+]
+
 COLUMNAS_ORIGINAL = [
     "id_reporte",
     "fecha_procesamiento",
@@ -461,6 +492,8 @@ def normalizar_hora(valor):
     valor = str(valor).strip()
     if not valor:
         return "", False, ""
+    if es_no_informado(valor):
+        return valor, True, ""
 
     patron = r"^(?P<hora>\d{1,2})[:.](?P<minuto>\d{2})$"
     match = re.match(patron, valor)
@@ -481,6 +514,8 @@ def normalizar_cantidad(valor):
     valor = str(valor).strip()
     if not valor:
         return "", False, ""
+    if es_no_informado(valor):
+        return valor, True, ""
 
     if not re.match(r"^\d+$", valor):
         return valor, False, "Debe ser un número entero mayor a 0. No se aceptan negativos, decimales ni texto."
@@ -604,27 +639,66 @@ def procesar_reporte(texto_original):
     return datos, respaldo, faltantes, alertas
 
 
+def es_no_informado(valor):
+    return str(valor).strip().lower() == "no informado"
+
+
+def validar_fecha_manual(valor):
+    valor = str(valor).strip()
+    if not valor:
+        return "", False, ""
+
+    if es_no_informado(valor):
+        return valor, True, ""
+
+    fecha_normalizada, uso_default = normalizar_fecha(valor)
+
+    if uso_default:
+        return valor, False, "Debe ingresar una fecha válida, por ejemplo 09/02/2026, 09-02-2026 o 09.02.2026."
+
+    return fecha_normalizada, True, ""
+
+
 def aplicar_correcciones(datos, correcciones, no_completar):
     datos_corregidos = datos.copy()
     registros_faltantes = []
     alertas_validacion = []
+    campos_no_completados = set(no_completar)
+    campos_corregidos = set()
 
     for campo in CAMPOS_OBLIGATORIOS:
         valor_original = datos_corregidos.get(campo, "")
         fue_manual = "No"
+        decision_no_completar = campo in campos_no_completados
 
         if campo in correcciones and correcciones[campo].strip():
-            datos_corregidos[campo] = correcciones[campo].strip()
+            valor_manual = correcciones[campo].strip()
+
+            if campo == "fecha_reporte":
+                fecha_normalizada, fecha_valida, mensaje_fecha = validar_fecha_manual(valor_manual)
+                datos_corregidos[campo] = fecha_normalizada
+                datos_corregidos["fecha_usada_por_defecto"] = "No" if fecha_valida else datos_corregidos.get("fecha_usada_por_defecto", "")
+                if not fecha_valida:
+                    alertas_validacion.append({
+                        "id_reporte": datos_corregidos["id_reporte"],
+                        "tipo_alerta": "Fecha inválida",
+                        "detalle": f"{ETIQUETAS[campo]}: '{valor_manual}'. {mensaje_fecha}",
+                    })
+            else:
+                datos_corregidos[campo] = valor_manual
+
             fue_manual = "Sí"
-        elif campo in no_completar and not valor_original:
+            campos_corregidos.add(campo)
+
+        elif decision_no_completar and not valor_original:
             datos_corregidos[campo] = "No informado"
 
-        if campo in correcciones or campo in no_completar:
+        if campo in correcciones or decision_no_completar:
             registros_faltantes.append({
                 "id_reporte": datos_corregidos["id_reporte"],
                 "campo": ETIQUETAS[campo],
                 "valor_final": datos_corregidos.get(campo, ""),
-                "fue_completado_manual": fue_manual,
+                "fue_completado_manual": fue_manual if not decision_no_completar else "No completado por usuario",
             })
 
     datos_corregidos, alertas_base = validar_y_normalizar_datos(datos_corregidos)
@@ -632,11 +706,19 @@ def aplicar_correcciones(datos, correcciones, no_completar):
         alerta["id_reporte"] = datos_corregidos["id_reporte"]
         alertas_validacion.append(alerta)
 
-    faltantes_finales = [
-        campo for campo in CAMPOS_OBLIGATORIOS
-        if not datos_corregidos.get(campo)
-    ]
+    faltantes_finales = []
 
+    for campo in CAMPOS_OBLIGATORIOS:
+        valor = datos_corregidos.get(campo, "")
+
+        if campo in campos_no_completados:
+            faltantes_finales.append(campo)
+        elif not valor:
+            faltantes_finales.append(campo)
+        elif es_no_informado(valor):
+            faltantes_finales.append(campo)
+
+    faltantes_finales = list(dict.fromkeys(faltantes_finales))
     valores_invalidos = [alerta["detalle"] for alerta in alertas_validacion]
 
     datos_corregidos["estado_validacion"] = (
@@ -676,7 +758,7 @@ def formatear_hoja_reporte_estructurado(workbook):
 
         adjusted_width = min(max(max_length + 2, 12), 45)
 
-        if header in ["observaciones", "campos_faltantes", "valores_invalidos", "campos_no_reconocidos", "campos_esperados_no_detectados"]:
+        if header in ["observaciones"]:
             adjusted_width = min(max(adjusted_width, 35), 60)
 
         ws.column_dimensions[column_letter].width = adjusted_width
@@ -695,11 +777,20 @@ def formatear_hoja_reporte_estructurado(workbook):
 def generar_excel(df_reportes, df_originales, df_faltantes, df_alertas):
     output = BytesIO()
 
+    df_reporte_limpio = df_reportes[COLUMNAS_REPORTE_LIMPIO].copy()
+    df_validaciones = df_reportes[[col for col in COLUMNAS_VALIDACIONES if col in df_reportes.columns]].copy()
+
+    if not df_alertas.empty:
+        df_alertas_export = df_alertas.copy()
+    else:
+        df_alertas_export = pd.DataFrame(columns=COLUMNAS_ALERTAS)
+
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_reportes.to_excel(writer, index=False, sheet_name="Reporte estructurado")
+        df_reporte_limpio.to_excel(writer, index=False, sheet_name="Reporte estructurado")
         df_originales.to_excel(writer, index=False, sheet_name="Mensajes originales")
         df_faltantes.to_excel(writer, index=False, sheet_name="Faltantes corregidos")
-        df_alertas.to_excel(writer, index=False, sheet_name="Alertas y validaciones")
+        df_validaciones.to_excel(writer, index=False, sheet_name="Validaciones por reporte")
+        df_alertas_export.to_excel(writer, index=False, sheet_name="Alertas y validaciones")
 
         formatear_hoja_reporte_estructurado(writer.book)
 
@@ -767,6 +858,8 @@ Reporte prevención de riesgos.
 - No se aceptan cantidades negativas, decimales ni texto en campos numéricos.
 - Si falta un campo, la app permite completarlo manualmente debajo del reporte.
 - Si aparece un campo nuevo o no reconocido, la app genera una alerta sin detener el procesamiento.
+- La hoja **Reporte estructurado** queda limpia, sin columnas técnicas de validación.
+- Las columnas de control quedan separadas en **Validaciones por reporte** y **Alertas y validaciones**.
 
 ### Instrucciones
 
@@ -909,8 +1002,14 @@ if st.session_state["datos_originales"]:
     df_faltantes = pd.DataFrame(registros_faltantes, columns=COLUMNAS_FALTANTES)
     df_alertas = pd.DataFrame(registros_alertas, columns=COLUMNAS_ALERTAS)
 
+    df_reporte_limpio = df_reportes[COLUMNAS_REPORTE_LIMPIO].copy()
+    df_validaciones = df_reportes[[col for col in COLUMNAS_VALIDACIONES if col in df_reportes.columns]].copy()
+
     st.subheader("Tabla estructurada final")
-    st.dataframe(df_reportes, use_container_width=True)
+    st.dataframe(df_reporte_limpio, use_container_width=True)
+
+    with st.expander("Ver validaciones por reporte"):
+        st.dataframe(df_validaciones, use_container_width=True)
 
     total = len(df_reportes)
     completos = len(df_reportes[df_reportes["estado_validacion"] == "Completo"])
