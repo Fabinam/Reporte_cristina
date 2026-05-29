@@ -1,5 +1,6 @@
 import re
 import hashlib
+import unicodedata
 from io import BytesIO
 from datetime import datetime, date
 
@@ -8,51 +9,182 @@ import streamlit as st
 from dateutil import parser
 
 
-st.set_page_config(page_title="Consolidador de reportes WhatsApp", layout="wide")
+st.set_page_config(
+    page_title="Consolidador reportes prevención de riesgos",
+    layout="wide"
+)
 
 COLUMNAS_REPORTE = [
-    "id_reporte", "fecha_reporte", "fecha_usada_por_defecto", "tipo_reporte",
-    "equipo", "unidad", "hora_inicio_actividades",
-    "equipo_completo_excavadores", "disponibilidad_sombra",
-    "estado_harneros", "estado_baldes", "estado_mesa_harnero",
-    "observaciones", "estado_validacion", "campos_faltantes",
+    "id_reporte",
+    "fecha_reporte",
+    "fecha_usada_por_defecto",
+    "tipo_reporte",
+    "unidad",
+    "equipo",
+    "inicio_jornada",
+    "actividad",
+    "numero_excavadores",
+    "cantidad_toldos",
+    "estado_sombra_toldos",
+    "cantidad_harneros",
+    "estado_harneros",
+    "cantidad_baldes",
+    "estado_baldes",
+    "mesa_gabinete",
+    "estado_mesa",
+    "observaciones",
+    "estado_validacion",
+    "campos_faltantes",
+    "campos_no_reconocidos",
+    "campos_esperados_no_detectados",
     "fecha_procesamiento",
 ]
 
-COLUMNAS_ORIGINAL = ["id_reporte", "fecha_procesamiento", "texto_original"]
-COLUMNAS_FALTANTES = ["id_reporte", "campo", "valor_final", "fue_completado_manual"]
+COLUMNAS_ORIGINAL = [
+    "id_reporte",
+    "fecha_procesamiento",
+    "texto_original",
+]
+
+COLUMNAS_FALTANTES = [
+    "id_reporte",
+    "campo",
+    "valor_final",
+    "fue_completado_manual",
+]
+
+COLUMNAS_CAMBIOS = [
+    "id_reporte",
+    "tipo_alerta",
+    "detalle",
+]
 
 CAMPOS_OBLIGATORIOS = [
-    "fecha_reporte", "equipo", "unidad", "hora_inicio_actividades",
-    "equipo_completo_excavadores", "disponibilidad_sombra",
-    "estado_harneros", "estado_baldes", "estado_mesa_harnero",
+    "fecha_reporte",
+    "unidad",
+    "equipo",
+    "inicio_jornada",
+    "actividad",
+    "numero_excavadores",
+    "cantidad_toldos",
+    "estado_sombra_toldos",
+    "cantidad_harneros",
+    "estado_harneros",
+    "cantidad_baldes",
+    "estado_baldes",
+    "mesa_gabinete",
+    "estado_mesa",
     "observaciones",
 ]
 
 ETIQUETAS = {
     "fecha_reporte": "Fecha",
-    "equipo": "Equipo",
     "unidad": "Unidad",
-    "hora_inicio_actividades": "Hora de inicio de actividades",
-    "equipo_completo_excavadores": "Equipo completo excavadores",
-    "disponibilidad_sombra": "Disponibilidad de sombra",
-    "estado_harneros": "Estado de harneros",
-    "estado_baldes": "Estado de baldes",
-    "estado_mesa_harnero": "Estado de mesa harnero",
+    "equipo": "Equipo",
+    "inicio_jornada": "Inicio jornada",
+    "actividad": "Actividad",
+    "numero_excavadores": "N° excavadores",
+    "cantidad_toldos": "Cantidad toldos",
+    "estado_sombra_toldos": "Estado sombra (toldos)",
+    "cantidad_harneros": "Cantidad harneros",
+    "estado_harneros": "Estado harneros",
+    "cantidad_baldes": "Cantidad baldes",
+    "estado_baldes": "Estado baldes",
+    "mesa_gabinete": "Mesa gabinete",
+    "estado_mesa": "Estado mesa",
     "observaciones": "Observaciones",
 }
 
-PATRONES_CAMPOS = {
-    "fecha": r"fecha",
-    "equipo": r"equipo",
-    "unidad": r"unidad",
-    "hora_inicio_actividades": r"hora\s+de\s+inicio\s+de\s+actividades",
-    "equipo_completo_excavadores": r"equipo\s+completo\s+excavadores(?:\s*\([^)]*\))?",
-    "disponibilidad_sombra": r"disponibilidad\s+de\s+sombra(?:\s*\([^)]*\))?",
-    "estado_harneros": r"estado\s+de\s+harneros",
-    "estado_baldes": r"estado\s+de\s+baldes",
-    "estado_mesa_harnero": r"estado\s+de\s+mesa\s+harnero",
-    "observaciones": r"observaciones",
+ALIAS_CAMPOS = {
+    "fecha_reporte": ["fecha", "dia", "día", "fecha reporte"],
+    "unidad": ["unidad", "cuadro", "sector"],
+    "equipo": ["equipo", "responsables"],
+    "inicio_jornada": [
+        "inicio jornada",
+        "hora inicio",
+        "hora de inicio",
+        "inicio de jornada",
+        "inicio actividades",
+        "hora inicio jornada",
+    ],
+    "actividad": ["actividad", "actividad realizada", "trabajo", "tarea", "labor"],
+    "numero_excavadores": [
+        "n excavadores",
+        "n° excavadores",
+        "nº excavadores",
+        "numero excavadores",
+        "número excavadores",
+        "cantidad excavadores",
+        "excavadores presentes",
+    ],
+    "cantidad_toldos": [
+        "cantidad toldos",
+        "n toldos",
+        "n° toldos",
+        "nº toldos",
+        "numero toldos",
+        "número toldos",
+        "toldos",
+    ],
+    "estado_sombra_toldos": [
+        "estado sombra",
+        "estado sombra toldos",
+        "estado de sombra",
+        "estado de toldos",
+        "estado toldos",
+        "sombra",
+        "estado sombra (toldos)",
+    ],
+    "cantidad_harneros": [
+        "cantidad harneros",
+        "n harneros",
+        "n° harneros",
+        "nº harneros",
+        "numero harneros",
+        "número harneros",
+        "harneros cantidad",
+    ],
+    "estado_harneros": [
+        "estado harneros",
+        "estado de harneros",
+        "harneros estado",
+    ],
+    "cantidad_baldes": [
+        "cantidad baldes",
+        "n baldes",
+        "n° baldes",
+        "nº baldes",
+        "numero baldes",
+        "número baldes",
+        "baldes cantidad",
+    ],
+    "estado_baldes": [
+        "estado baldes",
+        "estado de baldes",
+        "baldes estado",
+    ],
+    "mesa_gabinete": [
+        "mesa gabinete",
+        "mesa de gabinete",
+        "gabinete",
+        "mesa",
+    ],
+    "estado_mesa": [
+        "estado mesa",
+        "estado de mesa",
+        "estado mesa gabinete",
+        "estado de mesa gabinete",
+    ],
+    "observaciones": [
+        "observaciones",
+        "observación",
+        "observacion",
+        "obs",
+        "comentarios",
+        "comentario",
+        "nota",
+        "notas",
+    ],
 }
 
 
@@ -60,11 +192,53 @@ def iniciar_estado():
     st.session_state.setdefault("datos_originales", [])
     st.session_state.setdefault("respaldos", [])
     st.session_state.setdefault("faltantes_por_reporte", {})
+    st.session_state.setdefault("cambios_por_reporte", {})
     st.session_state.setdefault("texto_input", "")
 
 
 def limpiar_solo_caja():
     st.session_state["texto_input"] = ""
+
+
+def normalizar_clave(texto):
+    texto = str(texto).strip().lower()
+    texto = texto.replace("°", "")
+    texto = texto.replace("º", "")
+    texto = texto.replace("n°", "n")
+    texto = texto.replace("nº", "n")
+    texto = texto.replace("n.", "n")
+    texto = texto.replace("nro", "numero")
+    texto = texto.replace("número", "numero")
+
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+
+    texto = re.sub(r"\([^)]*\)", "", texto)
+    texto = re.sub(r"[^a-z0-9ñ\s]", " ", texto)
+    texto = re.sub(r"\s+", " ", texto).strip()
+
+    return texto
+
+
+ALIAS_NORMALIZADOS = {}
+for campo, alias_list in ALIAS_CAMPOS.items():
+    for alias in alias_list:
+        ALIAS_NORMALIZADOS[normalizar_clave(alias)] = campo
+
+
+def campo_desde_etiqueta(etiqueta):
+    etiqueta_norm = normalizar_clave(etiqueta)
+
+    if etiqueta_norm in ALIAS_NORMALIZADOS:
+        return ALIAS_NORMALIZADOS[etiqueta_norm]
+
+    for alias_norm, campo in ALIAS_NORMALIZADOS.items():
+        if len(alias_norm) >= 5 and alias_norm in etiqueta_norm:
+            return campo
+        if len(etiqueta_norm) >= 5 and etiqueta_norm in alias_norm:
+            return campo
+
+    return None
 
 
 def limpiar_texto(texto):
@@ -73,72 +247,138 @@ def limpiar_texto(texto):
     texto = texto.replace("\u200f", "")
     texto = texto.replace("\xa0", " ")
     texto = texto.replace("\t", " ")
+    texto = texto.replace("–", "-")
+    texto = texto.replace("—", "-")
     texto = re.sub(r"[•●▪◦]", "\n", texto)
-    texto = re.sub(r"(?m)^\s*[-*]\s*", "", texto)
+    texto = re.sub(r"\r\n?", "\n", texto)
     texto = re.sub(r"\n{2,}", "\n", texto)
     return texto.strip()
 
 
 def separar_reportes(texto):
-    bloques = re.split(r"(?i)(?=Reporte\s+de\s+inicio\s+Jornada)", texto.strip())
+    texto = texto.strip()
+
+    bloques = re.split(
+        r"(?i)(?=Reporte\s+prevenci[oó]n\s+de\s+riesgos)",
+        texto
+    )
     bloques = [b.strip() for b in bloques if b.strip()]
 
     if len(bloques) <= 1:
         bloques = re.split(
-            r"(?=\[\d{1,2}:\d{2},\s*\d{1,2}/\d{1,2}/\d{2,4}\])",
-            texto.strip()
+            r"(?i)(?=Reporte\s+de\s+prevenci[oó]n\s+de\s+riesgos)",
+            texto
         )
         bloques = [b.strip() for b in bloques if b.strip()]
 
-    return bloques
+    if len(bloques) <= 1:
+        bloques = re.split(
+            r"(?=\[\d{1,2}:\d{2},\s*\d{1,2}/\d{1,2}/\d{2,4}\])",
+            texto
+        )
+        bloques = [b.strip() for b in bloques if b.strip()]
+
+    return bloques if bloques else [texto]
 
 
 def generar_id_reporte(texto):
     return hashlib.md5(texto.strip().encode("utf-8")).hexdigest()[:10]
 
 
-def extraer_campos(texto):
+def detectar_tipo_reporte(texto):
+    texto_norm = normalizar_clave(texto)
+
+    if "prevencion de riesgos" in texto_norm:
+        return "Prevención de riesgos"
+
+    return "No identificado"
+
+
+def extraer_lineas_candidatas(texto):
     texto = limpiar_texto(texto)
+    lineas = []
 
-    patron_general = "|".join(
-        f"(?P<{campo}>{patron})"
-        for campo, patron in PATRONES_CAMPOS.items()
-    )
+    for linea in texto.split("\n"):
+        linea = linea.strip()
+        linea = re.sub(r"^\s*[-*]+\s*", "", linea).strip()
 
-    patron = re.compile(
-        rf"(?im)^\s*(?:[-*]\s*)?(?P<label>{patron_general})\s*:\s*"
-    )
-
-    matches = list(patron.finditer(texto))
-    campos = {campo: "" for campo in PATRONES_CAMPOS.keys()}
-
-    for i, match in enumerate(matches):
-        campo_detectado = None
-
-        for campo in PATRONES_CAMPOS.keys():
-            if match.group(campo):
-                campo_detectado = campo
-                break
-
-        if not campo_detectado:
+        if not linea:
             continue
 
-        inicio_valor = match.end()
-        fin_valor = matches[i + 1].start() if i + 1 < len(matches) else len(texto)
+        if re.search(r"(?i)^reporte\s+", linea):
+            continue
 
-        valor = texto[inicio_valor:fin_valor].strip()
-        valor = re.sub(r"\s+", " ", valor).strip()
+        lineas.append(linea)
 
-        campos[campo_detectado] = valor
+    return lineas
 
-    return campos
+
+def extraer_campos(texto):
+    lineas = extraer_lineas_candidatas(texto)
+
+    campos = {campo: "" for campo in CAMPOS_OBLIGATORIOS}
+    campos_detectados = []
+    campos_no_reconocidos = []
+
+    alias_posibles = sorted(
+        set(sum(ALIAS_CAMPOS.values(), [])),
+        key=len,
+        reverse=True
+    )
+
+    alias_regex = "|".join(re.escape(alias) for alias in alias_posibles)
+
+    for linea in lineas:
+        linea_original = linea.strip()
+
+        etiqueta = ""
+        valor = ""
+
+        if ":" in linea_original:
+            partes = linea_original.split(":", 1)
+            etiqueta = partes[0].strip()
+            valor = partes[1].strip()
+
+        elif re.search(r"\s+-\s+", linea_original):
+            partes = re.split(r"\s+-\s+", linea_original, maxsplit=1)
+            etiqueta = partes[0].strip()
+            valor = partes[1].strip() if len(partes) > 1 else ""
+
+        else:
+            match = re.match(
+                rf"(?i)^\s*(?P<etiqueta>{alias_regex})\s+(?P<valor>.*)$",
+                linea_original
+            )
+
+            if match:
+                etiqueta = match.group("etiqueta").strip()
+                valor = match.group("valor").strip()
+            else:
+                campos_no_reconocidos.append(linea_original)
+                continue
+
+        campo = campo_desde_etiqueta(etiqueta)
+
+        if campo:
+            campos[campo] = normalizar_texto_simple(valor)
+            campos_detectados.append(campo)
+        else:
+            campos_no_reconocidos.append(linea_original)
+
+    campos_esperados_no_detectados = [
+        campo for campo in CAMPOS_OBLIGATORIOS
+        if campo not in campos_detectados
+    ]
+
+    return campos, campos_no_reconocidos, campos_esperados_no_detectados
 
 
 def normalizar_fecha(valor_fecha):
     if not valor_fecha or not str(valor_fecha).strip():
         return date.today().strftime("%d/%m/%Y"), True
 
-    valor = str(valor_fecha).strip().lower().replace(" de ", " ")
+    valor = str(valor_fecha).strip().lower()
+    valor = valor.replace(" de ", " ")
 
     meses = {
         "enero": "january",
@@ -167,32 +407,34 @@ def normalizar_fecha(valor_fecha):
 
 
 def normalizar_texto_simple(valor):
-    if not valor:
+    if valor is None:
         return ""
 
-    valor = re.sub(r"\s+", " ", str(valor).strip())
+    valor = str(valor).strip()
+    valor = re.sub(r"\s+", " ", valor)
 
     if valor.lower() in [
-        "ninguna", "sin observaciones", "sin observación",
-        "no hay", "n/a", "na", "no aplica"
+        "ninguna",
+        "sin observaciones",
+        "sin observación",
+        "sin observacion",
+        "no hay",
+        "n/a",
+        "na",
+        "no aplica",
     ]:
         return "Sin observaciones"
 
     return valor
 
 
-def detectar_tipo_reporte(texto):
-    if "inicio jornada" in texto.lower():
-        return "Inicio jornada"
-    return "No identificado"
-
-
 def procesar_reporte(texto_original):
     texto_limpio = limpiar_texto(texto_original)
-    campos = extraer_campos(texto_limpio)
     id_reporte = generar_id_reporte(texto_original)
 
-    fecha_raw = campos.get("fecha", "")
+    campos, campos_no_reconocidos, campos_esperados_no_detectados = extraer_campos(texto_limpio)
+
+    fecha_raw = campos.get("fecha_reporte", "")
     fecha_reporte, fecha_default = normalizar_fecha(fecha_raw)
 
     datos = {
@@ -200,15 +442,20 @@ def procesar_reporte(texto_original):
         "fecha_reporte": fecha_reporte,
         "fecha_usada_por_defecto": "Sí" if fecha_default else "No",
         "tipo_reporte": detectar_tipo_reporte(texto_limpio),
-        "equipo": normalizar_texto_simple(campos.get("equipo", "")),
-        "unidad": normalizar_texto_simple(campos.get("unidad", "")),
-        "hora_inicio_actividades": normalizar_texto_simple(campos.get("hora_inicio_actividades", "")),
-        "equipo_completo_excavadores": normalizar_texto_simple(campos.get("equipo_completo_excavadores", "")),
-        "disponibilidad_sombra": normalizar_texto_simple(campos.get("disponibilidad_sombra", "")),
-        "estado_harneros": normalizar_texto_simple(campos.get("estado_harneros", "")),
-        "estado_baldes": normalizar_texto_simple(campos.get("estado_baldes", "")),
-        "estado_mesa_harnero": normalizar_texto_simple(campos.get("estado_mesa_harnero", "")),
-        "observaciones": normalizar_texto_simple(campos.get("observaciones", "")),
+        "unidad": campos.get("unidad", ""),
+        "equipo": campos.get("equipo", ""),
+        "inicio_jornada": campos.get("inicio_jornada", ""),
+        "actividad": campos.get("actividad", ""),
+        "numero_excavadores": campos.get("numero_excavadores", ""),
+        "cantidad_toldos": campos.get("cantidad_toldos", ""),
+        "estado_sombra_toldos": campos.get("estado_sombra_toldos", ""),
+        "cantidad_harneros": campos.get("cantidad_harneros", ""),
+        "estado_harneros": campos.get("estado_harneros", ""),
+        "cantidad_baldes": campos.get("cantidad_baldes", ""),
+        "estado_baldes": campos.get("estado_baldes", ""),
+        "mesa_gabinete": campos.get("mesa_gabinete", ""),
+        "estado_mesa": campos.get("estado_mesa", ""),
+        "observaciones": campos.get("observaciones", ""),
         "fecha_procesamiento": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
     }
 
@@ -225,6 +472,10 @@ def procesar_reporte(texto_original):
 
     datos["estado_validacion"] = "Completo" if not faltantes else "Incompleto"
     datos["campos_faltantes"] = ", ".join([ETIQUETAS[c] for c in faltantes])
+    datos["campos_no_reconocidos"] = " | ".join(campos_no_reconocidos)
+    datos["campos_esperados_no_detectados"] = ", ".join(
+        [ETIQUETAS.get(c, c) for c in campos_esperados_no_detectados]
+    )
 
     respaldo = {
         "id_reporte": id_reporte,
@@ -232,7 +483,23 @@ def procesar_reporte(texto_original):
         "texto_original": texto_original.strip(),
     }
 
-    return datos, respaldo, faltantes
+    alertas = []
+
+    if campos_no_reconocidos:
+        alertas.append({
+            "id_reporte": id_reporte,
+            "tipo_alerta": "Campo no reconocido o nuevo formato",
+            "detalle": " | ".join(campos_no_reconocidos),
+        })
+
+    if campos_esperados_no_detectados:
+        alertas.append({
+            "id_reporte": id_reporte,
+            "tipo_alerta": "Campo esperado no detectado",
+            "detalle": ", ".join([ETIQUETAS.get(c, c) for c in campos_esperados_no_detectados]),
+        })
+
+    return datos, respaldo, faltantes, alertas
 
 
 def aplicar_correcciones(datos, correcciones, no_completar):
@@ -272,13 +539,14 @@ def aplicar_correcciones(datos, correcciones, no_completar):
     return datos_corregidos, registros_faltantes
 
 
-def generar_excel(df_reportes, df_originales, df_faltantes):
+def generar_excel(df_reportes, df_originales, df_faltantes, df_alertas):
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_reportes.to_excel(writer, index=False, sheet_name="Reporte estructurado")
         df_originales.to_excel(writer, index=False, sheet_name="Mensajes originales")
         df_faltantes.to_excel(writer, index=False, sheet_name="Faltantes corregidos")
+        df_alertas.to_excel(writer, index=False, sheet_name="Alertas formato")
 
     output.seek(0)
     return output
@@ -303,193 +571,35 @@ def detectar_duplicados(df):
     if df.empty:
         return pd.DataFrame()
 
-    columnas = ["fecha_reporte", "equipo", "unidad", "hora_inicio_actividades"]
+    columnas = ["fecha_reporte", "unidad", "equipo", "inicio_jornada"]
+
     return df[df.duplicated(subset=columnas, keep=False)].sort_values(columnas)
 
 
 iniciar_estado()
 
-st.title("Consolidador de reportes WhatsApp")
+st.title("Consolidador de reportes de prevención de riesgos")
 
 st.markdown("""
-Esta app permite pegar reportes enviados por WhatsApp, convertirlos en una tabla ordenada
-y descargar un Excel consolidado.
+Esta app permite pegar reportes de prevención de riesgos enviados por WhatsApp,
+convertirlos en una tabla ordenada y descargar un Excel consolidado.
 
-### Formas de uso
+### Formato esperado
 
-1. **Carga masiva:** pega varios reportes juntos y presiona **Agregar al consolidado**.
-2. **Carga individual:** pega un reporte, agrégalo, luego limpia la caja y pega otro.
-
-Los reportes agregados se acumulan en pantalla hasta que presiones **Vaciar consolidado**.
-
-### Qué hace la app
-
-- Reconoce distintos formatos de fecha.
-- Si no hay fecha, usa la fecha del día.
-- Detecta campos faltantes.
-- Permite completar campos debajo de cada reporte.
-- Reconoce etiquetas con paréntesis, por ejemplo:
-  - `Equipo completo excavadores (si o no): si, 1`
-  - `Disponibilidad de sombra (si o no): si, malla`
-- Si un campo viene vacío, lo reconoce como faltante.
-- Descarga un Excel con:
-  - reporte estructurado,
-  - mensajes originales,
-  - faltantes corregidos.
-- Descarga un TXT con respaldo de los mensajes originales.
-
-### Instrucciones
-
-1. Pega uno o varios reportes en la caja de texto.
-2. Presiona **Agregar al consolidado**.
-3. Revisa si hay alertas de campos faltantes.
-4. Si falta información, complétala manualmente o marca **No completar este reporte**.
-5. Si llega otro reporte después, presiona **Limpiar caja de texto**, pega el nuevo reporte y vuelve a presionar **Agregar al consolidado**.
-6. Cuando termines, descarga el Excel o el respaldo TXT.
-""")
-
-texto = st.text_area(
-    "Pega aquí uno o varios reportes nuevos",
-    height=300,
-    key="texto_input",
-    placeholder="Pega aquí el reporte recién recibido o varios reportes juntos..."
-)
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    agregar = st.button("Agregar al consolidado", type="primary")
-
-with col2:
-    st.button("Limpiar caja de texto", on_click=limpiar_solo_caja)
-
-with col3:
-    vaciar = st.button("Vaciar consolidado")
-
-if vaciar:
-    st.session_state.clear()
-    st.rerun()
-
-if agregar:
-    if not texto.strip():
-        st.warning("Debes pegar al menos un reporte.")
-    else:
-        reportes = separar_reportes(texto)
-        existentes = {r["id_reporte"] for r in st.session_state["datos_originales"]}
-
-        nuevos = 0
-        duplicados = 0
-
-        for reporte in reportes:
-            datos, respaldo, faltantes = procesar_reporte(reporte)
-
-            if datos["id_reporte"] in existentes:
-                duplicados += 1
-                continue
-
-            st.session_state["datos_originales"].append(datos)
-            st.session_state["respaldos"].append(respaldo)
-            st.session_state["faltantes_por_reporte"][datos["id_reporte"]] = faltantes
-            existentes.add(datos["id_reporte"])
-            nuevos += 1
-
-        st.success(f"Se agregaron {nuevos} reporte(s) al consolidado.")
-
-        if duplicados:
-            st.warning(f"Se omitieron {duplicados} reporte(s) duplicado(s).")
-
-if st.session_state["datos_originales"]:
-    datos_finales = []
-    registros_faltantes = []
-
-    st.subheader("Consolidado en curso")
-
-    for i, datos in enumerate(st.session_state["datos_originales"], start=1):
-        id_reporte = datos["id_reporte"]
-        faltantes = st.session_state["faltantes_por_reporte"].get(id_reporte, [])
-
-        with st.container(border=True):
-            st.markdown(f"### Reporte {i}")
-            st.write(f"**ID:** {id_reporte}")
-            st.write(f"**Equipo detectado:** {datos.get('equipo') or 'No detectado'}")
-            st.write(f"**Unidad detectada:** {datos.get('unidad') or 'No detectada'}")
-            st.write(f"**Fecha detectada:** {datos.get('fecha_reporte')}")
-
-            correcciones = {}
-            no_completar = set()
-
-            if faltantes:
-                st.warning(
-                    "Campos faltantes: "
-                    + ", ".join([ETIQUETAS[c] for c in faltantes])
-                )
-
-                decision = st.radio(
-                    "¿Quieres completar manualmente los campos faltantes?",
-                    ["Sí, completar ahora", "No completar este reporte"],
-                    key=f"decision_{id_reporte}",
-                    horizontal=True,
-                )
-
-                if decision == "Sí, completar ahora":
-                    for campo in faltantes:
-                        correcciones[campo] = st.text_input(
-                            ETIQUETAS[campo],
-                            key=f"{id_reporte}_{campo}"
-                        )
-                else:
-                    no_completar = set(faltantes)
-            else:
-                st.success("Reporte completo.")
-
-            datos_corregidos, registros = aplicar_correcciones(
-                datos,
-                correcciones,
-                no_completar
-            )
-
-            datos_finales.append(datos_corregidos)
-            registros_faltantes.extend(registros)
-
-    df_reportes = pd.DataFrame(datos_finales, columns=COLUMNAS_REPORTE)
-    df_originales = pd.DataFrame(st.session_state["respaldos"], columns=COLUMNAS_ORIGINAL)
-    df_faltantes = pd.DataFrame(registros_faltantes, columns=COLUMNAS_FALTANTES)
-
-    st.subheader("Tabla estructurada final")
-    st.dataframe(df_reportes, use_container_width=True)
-
-    total = len(df_reportes)
-    completos = len(df_reportes[df_reportes["estado_validacion"] == "Completo"])
-    incompletos = total - completos
-    equipos_unicos = df_reportes["equipo"].replace("", pd.NA).dropna().nunique()
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total reportes", total)
-    c2.metric("Completos", completos)
-    c3.metric("Incompletos", incompletos)
-    c4.metric("Equipos únicos", equipos_unicos)
-
-    duplicados_df = detectar_duplicados(df_reportes)
-
-    if not duplicados_df.empty:
-        st.warning("Se detectaron posibles duplicados por fecha, equipo, unidad y hora.")
-        st.dataframe(duplicados_df, use_container_width=True)
-
-    excel = generar_excel(df_reportes, df_originales, df_faltantes)
-    txt = generar_txt(df_originales)
-
-    st.download_button(
-        label="Descargar Excel consolidado",
-        data=excel,
-        file_name="reportes_whatsapp_consolidado.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-
-    st.download_button(
-        label="Descargar respaldo TXT",
-        data=txt,
-        file_name="respaldo_mensajes_originales.txt",
-        mime="text/plain",
-    )
-else:
-    st.info("Aún no hay reportes agregados al consolidado.")
+```text
+Reporte prevención de riesgos.
+- Fecha:
+- Unidad:
+- Equipo:
+- Inicio jornada:
+- Actividad:
+- N° excavadores:
+- Cantidad toldos:
+- Estado sombra (toldos):
+- Cantidad harneros:
+- Estado harneros:
+- Cantidad baldes:
+- Estado baldes:
+- Mesa gabinete:
+- Estado mesa:
+- Observaciones:
