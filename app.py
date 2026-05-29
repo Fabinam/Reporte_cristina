@@ -597,15 +597,14 @@ convertirlos en una tabla ordenada y descargar un Excel consolidado.
 
 ### Formato esperado
 
-```text
 Reporte prevención de riesgos.
+
 - Fecha:
 - Unidad:
 - Equipo:
 - Inicio jornada:
 - Actividad:
 - N° excavadores:
-- Cantidad toldos:
 - Sombra (Toldo/Malla):
 - Cantidad sombra (Toldo/Malla):
 - Cantidad harneros:
@@ -615,3 +614,27 @@ Reporte prevención de riesgos.
 - Mesa gabinete:
 - Estado mesa:
 - Observaciones:
+
+### Detección inteligente
+
+La app intenta reconocer cambios de formato:
+- con o sin "-"
+- con o sin ":"
+- pequeñas variaciones en nombres de campos
+- fechas en distintos formatos
+
+Si alguien agrega o cambia un campo, la app no se detiene:
+- genera una alerta
+- guarda el mensaje original
+- continúa procesando
+
+### Instrucciones
+
+1. Pega uno o varios reportes.
+2. Presiona "Agregar al consolidado".
+3. Completa campos faltantes si aparecen.
+4. Usa "Limpiar caja de texto" para seguir agregando reportes.
+5. Descarga el Excel consolidado o el TXT de respaldo.
+""")
+
+:
