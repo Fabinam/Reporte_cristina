@@ -690,7 +690,7 @@ def aplicar_correcciones(datos, correcciones, no_completar):
             fue_manual = "Sí"
             campos_corregidos.add(campo)
 
-        elif decision_no_completar and not valor_original:
+        elif decision_no_completar:
             datos_corregidos[campo] = "No informado"
 
         if campo in correcciones or decision_no_completar:
@@ -812,6 +812,52 @@ def generar_txt(df_originales):
     return "\n".join(partes).encode("utf-8")
 
 
+
+def es_alerta_validacion(alerta):
+    return alerta.get("tipo_alerta") in {"Hora inválida", "Cantidad inválida", "Fecha inválida"}
+
+
+def campo_desde_detalle_alerta(detalle):
+    etiqueta = str(detalle).split(":", 1)[0].strip()
+    for campo, etiqueta_oficial in ETIQUETAS.items():
+        if normalizar_clave(etiqueta) == normalizar_clave(etiqueta_oficial):
+            return campo
+    return None
+
+
+def campos_invalidos_desde_alertas(alertas):
+    campos = []
+    for alerta in alertas:
+        if es_alerta_validacion(alerta):
+            campo = campo_desde_detalle_alerta(alerta.get("detalle", ""))
+            if campo and campo not in campos:
+                campos.append(campo)
+    return campos
+
+
+def unir_campos_sin_duplicados(*listas):
+    resultado = []
+    for lista in listas:
+        for campo in lista:
+            if campo not in resultado:
+                resultado.append(campo)
+    return resultado
+
+
+def deduplicar_alertas(alertas):
+    vistas = set()
+    resultado = []
+    for alerta in alertas:
+        clave = (
+            alerta.get("id_reporte", ""),
+            alerta.get("tipo_alerta", ""),
+            alerta.get("detalle", ""),
+        )
+        if clave not in vistas:
+            vistas.add(clave)
+            resultado.append(alerta)
+    return resultado
+
 def detectar_duplicados(df):
     if df.empty:
         return pd.DataFrame()
@@ -866,7 +912,7 @@ Reporte prevención de riesgos.
 1. Pega uno o varios reportes en la caja de texto.
 2. Presiona **Agregar al consolidado**.
 3. Revisa las alertas de campos faltantes o valores inválidos.
-4. Completa manualmente los datos faltantes o selecciona **No completar este reporte**.
+4. Corrige manualmente los datos faltantes o inválidos en la misma sección del reporte, o selecciona **No completar este reporte**.
 5. Si llega otro reporte después, usa **Limpiar caja de texto** y vuelve a pegar.
 6. Descarga el Excel consolidado o el TXT de respaldo.
 """)
@@ -958,40 +1004,61 @@ if st.session_state["datos_originales"]:
             st.write(f"**Equipo detectado:** {datos.get('equipo') or 'No detectado'}")
             st.write(f"**Fecha detectada:** {datos.get('fecha_reporte')}")
 
-            if alertas:
-                for alerta in alertas:
+            alertas_formato = [alerta for alerta in alertas if not es_alerta_validacion(alerta)]
+            alertas_validacion_inicial = [alerta for alerta in alertas if es_alerta_validacion(alerta)]
+            campos_invalidos = campos_invalidos_desde_alertas(alertas_validacion_inicial)
+            campos_para_revisar = unir_campos_sin_duplicados(faltantes, campos_invalidos)
+
+            if alertas_formato:
+                for alerta in alertas_formato:
                     st.warning(f"{alerta['tipo_alerta']}: {alerta['detalle']}")
                     registros_alertas.append(alerta)
+
+            if alertas_validacion_inicial:
+                for alerta in alertas_validacion_inicial:
+                    st.warning(f"{alerta['tipo_alerta']}: {alerta['detalle']}")
 
             correcciones = {}
             no_completar = set()
 
-            if faltantes:
-                st.warning("Campos faltantes: " + ", ".join([ETIQUETAS[c] for c in faltantes]))
+            if campos_para_revisar:
+                if faltantes:
+                    st.warning("Campos faltantes: " + ", ".join([ETIQUETAS[c] for c in faltantes]))
+                if campos_invalidos:
+                    st.warning("Campos con valores inválidos: " + ", ".join([ETIQUETAS[c] for c in campos_invalidos]))
 
                 decision = st.radio(
-                    "¿Quieres completar manualmente los campos faltantes?",
-                    ["Sí, completar ahora", "No completar este reporte"],
+                    "¿Quieres corregir manualmente los campos observados?",
+                    ["Sí, corregir ahora", "No completar este reporte"],
                     key=f"decision_{id_reporte}",
                     horizontal=True,
                 )
 
-                if decision == "Sí, completar ahora":
-                    for campo in faltantes:
+                if decision == "Sí, corregir ahora":
+                    for campo in campos_para_revisar:
+                        valor_actual = datos.get(campo, "") if campo in campos_invalidos else ""
                         correcciones[campo] = st.text_input(
                             ETIQUETAS[campo],
-                            key=f"{id_reporte}_{campo}"
+                            value=valor_actual,
+                            key=f"{id_reporte}_{campo}",
+                            help="Corrige este campo. Se aplicarán las mismas validaciones del reporte original."
                         )
                 else:
-                    no_completar = set(faltantes)
+                    no_completar = set(campos_para_revisar)
             else:
-                st.success("Reporte sin campos vacíos.")
+                st.success("Reporte sin campos vacíos ni valores inválidos.")
 
             datos_corregidos, registros, alertas_correccion = aplicar_correcciones(
                 datos,
                 correcciones,
                 no_completar
             )
+
+            if alertas_correccion:
+                for alerta in alertas_correccion:
+                    st.error(f"Sigue pendiente: {alerta['tipo_alerta']}: {alerta['detalle']}")
+            elif campos_para_revisar and correcciones:
+                st.success("Correcciones validadas correctamente.")
 
             datos_finales.append(datos_corregidos)
             registros_faltantes.extend(registros)
@@ -1000,6 +1067,7 @@ if st.session_state["datos_originales"]:
     df_reportes = pd.DataFrame(datos_finales, columns=COLUMNAS_REPORTE)
     df_originales = pd.DataFrame(st.session_state["respaldos"], columns=COLUMNAS_ORIGINAL)
     df_faltantes = pd.DataFrame(registros_faltantes, columns=COLUMNAS_FALTANTES)
+    registros_alertas = deduplicar_alertas(registros_alertas)
     df_alertas = pd.DataFrame(registros_alertas, columns=COLUMNAS_ALERTAS)
 
     df_reporte_limpio = df_reportes[COLUMNAS_REPORTE_LIMPIO].copy()
